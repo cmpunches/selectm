@@ -1,4 +1,5 @@
 from configparser import ConfigParser
+import requests
 
 
 class ConfLoader:
@@ -11,12 +12,19 @@ class ConfLoader:
         self.password = parser.get( 'user', 'password' )
 
 
+class Session:
+    def __init__( self, conf ):
+        self.client = requests.Session()
+        self.conf = conf
+
+    def login(self):
+        pass
+
 def Main():
     conf = ConfLoader('Conf/configuration.ini')
+    session = Session( conf )
+    session.login()
 
 
-# Press the green button in the gutter to run the script.
 if __name__ == '__main__':
     Main()
-
-# See PyCharm help at https://www.jetbrains.com/help/pycharm/
