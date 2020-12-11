@@ -496,12 +496,13 @@ class Session:
 
 
 def list_items( session, all=False ):
+    log = Logger( 'Inventory', session.conf )
     for item in session.inventory:
         if not all:
             if item.available:
-                print(item)
+                log( ERR.INFO, item )
         else:
-            print(item)
+            log( ERR.INFO, item )
 
 
 def buy( session ):
