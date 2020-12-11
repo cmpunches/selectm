@@ -51,7 +51,7 @@ More details can be found here: https://note.nkmk.me/en/python-pip-install-requi
 # Configuration
 Configuration should be a familiar process to most other tools.  An INI file provides the options you'll want.  A sample configuration file is provided for ease of use.
 
-## Rename the sample configuration file and configure the utility.
+## Rename the sample configuration file / fill out values.
 In the `./Conf` directory, you'll see a file named `configuration.sample.ini`.  
 
 Rename this file to whatever you want, however if you specify the name `configuration.ini` in the same directory, then `selectm` will find it automatically when you run it.  
