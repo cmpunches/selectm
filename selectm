@@ -1,15 +1,14 @@
+#!/usr/bin/env python3
+
 from configparser import ConfigParser
-import requests
-import sys
+import requests, json, os.path
+from sys import stderr, argv
 from lxml import html
-import json
 
+from datetime import datetime
+from enum import Enum
+import argparse
 
-success_response_codes = [ 200, 201, 301, 302 ]
-
-def fail( step ):
-    print("Failed during '{0}' call.".format( step ), file=sys.stderr )
-    exit(1)
 
 class Product:
     def __init__( self, brand_id, brand_family_id, product_name, available ):
@@ -36,9 +35,95 @@ class ConfLoader:
         self.barrels  = parser.get( 'targeting', 'barrels')
         self.username = parser.get( 'user', 'username' )
         self.password = parser.get( 'user', 'password' )
+        self.log_file = parser.get('logging', 'log_file')
+        self.max_logging_level = parser.getint('logging', 'verbosity')
+        self.log_to_file = True
 
 
-class InteractionClient:
+####
+# The SILO GROUP Python Logging module - 2020
+# - Embedded for portability.
+####
+
+# Returns a timestamp in ISO 8601 format
+# Reference: https://www.iso.org/iso-8601-date-and-time-format.html
+def get8601():
+    return datetime.now().isoformat()
+
+
+# Create "verbosity channels" for logging.
+class ERR( Enum ):
+    FATAL = 1
+    INFO  = 2
+    WARN  = 3
+    DEBUG = 4
+
+
+class Logger():
+    def __init__( self, mask_name, config ):
+        # the application name
+        self.mask_name = mask_name
+
+        # the verbosity level to use
+        self.verbosity = config.max_logging_level
+
+        # boolean flag for whether to use a log file
+        self.log_to_file = config.log_to_file
+
+        # path to log file
+        self.log_file = config.log_file
+
+    def write_logfile( self, msg ):
+        if self.log_to_file:
+            with open( self.log_file, 'a+' ) as LF:
+                LF.write( "{0}\n".format( msg ) )
+
+    def timestamp_msg( self, msg ):
+        return
+
+    # log()
+    # -
+    # used by modules to print to file and log
+    # params:
+    # err_class - the channel to use for log messages
+    # msg       - the content of the log message
+    def log( self, err_class, msg ):
+        # prepend 8601 format timestamp and mask name
+        msg = "[{0}]\t[{1}]\t[{2}] {3}".format(
+            get8601(),
+            err_class.name,
+            self.mask_name,
+            msg
+        )
+
+        # PEP8 is not used here deliberately.  I have a rant about PEP8.
+        if err_class == ERR.INFO and self.verbosity >= err_class.value:
+            print( msg )
+            self.write_logfile( msg )
+
+        if err_class == ERR.WARN and self.verbosity >= err_class.value:
+            print( msg, file=stderr )
+            self.write_logfile( msg )
+
+        # always show fatal errors anyway
+        if err_class == ERR.FATAL:
+            print( msg, file=stderr )
+            self.write_logfile( msg )
+
+        # if channel matches verbosity
+        if err_class == ERR.DEBUG and self.verbosity >= err_class.value:
+            print( msg )
+            self.write_logfile( msg )
+
+    # let the object be callable to use the log method
+    def __call__( self, err_class, msg ):
+        return self.log( err_class, msg )
+
+
+success_response_codes = [ 200, 201, 301, 302 ]
+
+
+class Session:
     def __init__( self, conf ):
         self.client = requests.Session()
         self.client.headers.update(
@@ -49,6 +134,11 @@ class InteractionClient:
         )
         self.conf = conf
         self.inventory = list()
+        self.log = Logger( 'SESSION', conf )
+
+    def fail( self, step ):
+        self.log( ERR.FATAL, "Failed during '{0}' call.".format( step ) )
+        exit(1)
 
     def login(self):
         headers = {
@@ -73,9 +163,9 @@ class InteractionClient:
         login_url = "https://{0}/app_users/login".format( self.conf.site_url )
         response = self.client.post( login_url, headers=headers, data=data )
         if response.status_code in success_response_codes:
-            print("Login successful.")
+            self.log( ERR.INFO, "Login successful." )
         else:
-            fail("login")
+            self.fail( "login" )
 
     def update_inventory(self):
         inventory_pull = list()
@@ -83,7 +173,7 @@ class InteractionClient:
         inventory_url = "https://{0}/orders/create-order".format( self.conf.site_url )
         response = self.client.get( inventory_url )
         if not response.status_code in success_response_codes:
-            fail( "inventory-update" )
+            self.fail( "inventory-update" )
 
         deserialized_response = html.fromstring( response.text )
         product_listings_raw = deserialized_response.xpath('//*/div[@class="brands"]/div[@class="row"]/div')
@@ -114,23 +204,21 @@ class InteractionClient:
         self.inventory = inventory_pull
 
     def item_is_available(self, brand_id ):
+        self.log( ERR.INFO, "Searching for brand_id '{0}' in inventory.".format( brand_id ) )
         for item in self.inventory:
             if item.brand_id == brand_id:
-                print("Found item: {0}".format(item))
+                self.log( ERR.INFO, "Found item: {0}".format( item ) )
                 if item.available:
                     return True
-        print("Not available.")
+        self.log( ERR.INFO, "Not available." )
         return False
 
     def get_item_from_inventory(self, brand_id=None, product_name=None ):
         retVal = None
 
-        if (brand_id is None and product_name is None) or (brand_id is not None and product_name is not None):
-            print(
-                "Must provide ONE OF either a brand_id or product_name to pull an item from inventory.",
-                file=sys.stderr
-            )
-            exit(1)
+        if ( brand_id is None and product_name is None ) or ( brand_id is not None and product_name is not None ):
+            self.log( ERR.FATAL, "Must provide ONE OF: brand_id or product_name to pull an item from inventory." )
+            self.fail( "get-item-from-inventory" )
 
         if product_name is not None:
             for item in self.inventory:
@@ -145,6 +233,8 @@ class InteractionClient:
         return retVal
 
     def add_to_cart( self, item ):
+        self.log( ERR.INFO, "Adding item '{0}' to cart.".format( item.product_name ))
+
         headers = {
             'Host': self.conf.site_url,
             'Accept': 'application/json, text/javascript, */*; q=0.01',
@@ -154,6 +244,7 @@ class InteractionClient:
             'Connection': 'keep-alive',
             'Referer': "https://{0}/orders/create-order".format( self.conf.site_url )
         }
+
         data = {
             'brandId': item.brand_id,
             'numBarrels': self.conf.barrels,
@@ -166,24 +257,23 @@ class InteractionClient:
             try:
                 response_obj = json.loads( response.text )
                 if len(response_obj['successMessages']) > 0:
-                    print("Successfully added to cart.")
+                    self.log( ERR.INFO, "Successfully added to cart." )
                 else:
-                    print("Got a successful HTTP response but body did not indicate success.", file=sys.stderr)
-                    exit(1)
+                    self.log( ERR.FATAL, "Got a successful HTTP response but body did not indicate success." )
+                    self.fail( "add-to-cart" )
             except:
-                print("Got a non-json response and expected a json response.", file=sys.stderr)
-                exit(1)
+                self.log( ERR.FATAL, "Got a non-json response and expected a json response.")
+                self.fail( "add-to-cart" )
         else:
-            print( "Failed to add item '{0}' to cart.".format( item.product_name ), file=sys.stderr )
-            exit(1)
-
+            self.log( ERR.FATAL, "Failed to add item '{0}' to cart.".format( item.product_name ) )
+            self.fail( "add-to-cart" )
 
     # why this couldn't be a single form is beyond me
     def place_order(self):
-
         # 1
         # REQ: POST https://{}/orders/create-order +BODY (NHC)
         # RSP: 302->http://{}/orders/select-delivery (redirects to:) (empty body) (NHC)
+        self.log( ERR.INFO, "Creating order." )
 
         create_order_headers = {
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
@@ -205,14 +295,23 @@ class InteractionClient:
             data=create_order_data
         )
 
-        if not create_order_response.status_code in success_response_codes:
-            fail("create-order")
+        if create_order_response.status_code not in success_response_codes:
+            self.log(
+                ERR.FATAL,
+                "Got a bad HTTP response code creating the order ({0}).".format(
+                    create_order_response.status_code
+                )
+            )
+            self.fail( "create-order" )
+        else:
+            self.log( ERR.INFO, "Successfully created order." )
 
-        # end 1
+        # ---
 
         # 4
         # REQ: POST https://{}/orders/select-delivery (NHC) +BODY
         # RSP: 302->http://{}/orders/select-barrels (redirects to:)
+        self.log( ERR.INFO, "Selecting delivery method." )
 
         select_delivery_headers = {
             'Host': '{0}'.format( self.conf.site_url ),
@@ -233,7 +332,7 @@ class InteractionClient:
             'data[Address][zone_id][1]': '',
             'data[Address][city]': '',
             'data[Order][retailer_id]': '',
-            'data[Order][account_notes]'
+            'data[Order][account_notes]': ''
         }
 
         select_delivery_url = "https://{0}/orders/select-delivery".format( self.conf.site_url )
@@ -243,14 +342,23 @@ class InteractionClient:
             data=select_delivery_data
         )
 
-        if not select_delivery_response.status_code in success_response_codes:
-            fail("delivery-select")
+        if select_delivery_response.status_code not in success_response_codes:
+            self.log(
+                ERR.FATAL,
+                "Got a bad HTTP response when selecting delivery method ({0}).".format(
+                    select_delivery_response.status_code
+                )
+            )
+            self.fail( "delivery-select" )
+        else:
+            self.log( ERR.INFO, "Selected delivery method." )
 
         # ---
 
         # 7
         # REQ: POST https://{}/orders/select-barrels +BODY
         # RSP: 302->http://{}/orders/schedule-distillery-visit
+        self.log( ERR.INFO, "Registering barrel selection preference." )
 
         select_barrels_headers = {
             'Host': ''.format( self.conf.site_url ),
@@ -275,14 +383,23 @@ class InteractionClient:
             data=select_barrels_data
         )
 
-        if not select_barrels_response.status_code in success_response_codes:
-           fail( "select-barrels" )
+        if select_barrels_response.status_code not in success_response_codes:
+            self.log(
+                ERR.FATAL,
+                "Got a bad HTTP response when setting barrel selection preference ({0}).".format(
+                    select_barrels_response.status_code
+                )
+            )
+            self.fail( "select-barrels" )
+        else:
+            self.log( ERR.INFO, "Registered barrel selection preference." )
 
         # ---
 
         # 10
         # REQ: POST https://{}/orders/schedule-distillery-visit (NHC) +BODY
         # RSP: 302->http://{}/orders/confirm
+        self.log( ERR.INFO, "Scheduling distillery visit." )
 
         schedule_distillery_visit_headers = {
             'Host': '{0}'.format( self.conf.site_url ),
@@ -305,6 +422,7 @@ class InteractionClient:
             'data[TripDetail][5][morning_visit]':'am',
             'data[Unscheduled][sample_type_id]': '3'
         }
+
         schedule_distillery_visit_url = "https://{0}/orders/schedule-distillery-visit".format( self.conf.site_url )
         schedule_distillery_visit_response = self.client.post(
             schedule_distillery_visit_url,
@@ -312,8 +430,10 @@ class InteractionClient:
             data=schedule_distillery_visit_data
         )
 
-        if not schedule_distillery_visit_response.status_code in success_response_codes:
-            fail( "schedule-distillery-visit" )
+        if schedule_distillery_visit_response.status_code not in success_response_codes:
+            self.fail( "schedule-distillery-visit" )
+        else:
+            self.log( ERR.INFO, "Scheduled distiller visit." )
 
         # ---
 
@@ -321,6 +441,7 @@ class InteractionClient:
         # REQ: POST https://{}/orders/confirm
             # body: "_method=POST"
         # RSP: 302->http://{}/orders/order-complete (EB)
+        self.log( ERR.INFO, "Confirming order." )
 
         confirm_headers = {
             'Host': "{0}".format( self.conf.site_url ),
@@ -340,14 +461,17 @@ class InteractionClient:
         confirm_url = "https://{0}/orders/confirm".format( self.conf.site_url )
         confirm_response = self.client.post( confirm_url, headers=confirm_headers, data=confirm_data )
 
-        if not confirm_response.status_code in success_response_codes:
-            fail("confirm")
+        if confirm_response.status_code not in success_response_codes:
+            self.fail("confirm")
+        else:
+            self.log( ERR.INFO, "Order confirmed." )
 
         # ---
 
         # 15
         # REQ: POST https://{}/orders/order-complete (EB)
         # RSP: 200
+        self.log( ERR.INFO, "Completing order." )
 
         order_complete_headers = {
             'Host': "{0}".format( self.conf.site_url ),
@@ -363,28 +487,81 @@ class InteractionClient:
             headers=order_complete_headers
          )
 
-        if not order_complete_response.status_code in success_response_codes:
-            fail("order-complete")
+        if order_complete_response.status_code not in success_response_codes:
+            self.fail("order-complete")
+        else:
+            self.log( ERR.INFO, "Order submitted." )
+
         # ---
 
 
-
-def Main():
-    conf = ConfLoader( 'Conf/configuration.ini' )
-    session = InteractionClient( conf )
-    session.login()
-    session.update_inventory()
-
-#    if session.item_is_available( brand_id=conf.brand_id ):
-#        item = session.get_item_from_inventory( brand_id=conf.brand_id )
-#        print( "The item '{0}' is available for purchase.".format( item.product_name ) )
-#        session.add_to_cart( item )
-#    else:
-#        print( "The configured item is not available.", file=sys.stderr )
+def list_items( session, all=False ):
     for item in session.inventory:
-        if item.available:
+        if not all:
+            if item.available:
+                print(item)
+        else:
             print(item)
 
 
+def buy( session ):
+    log = Logger( 'Buy', session.conf )
+
+    if session.item_is_available( brand_id=session.conf.brand_id ):
+        item = session.get_item_from_inventory( brand_id=session.conf.brand_id )
+        log( ERR.INFO, "The item '{0}' is available for purchase.".format( item.product_name ) )
+        session.add_to_cart( item )
+        session.place_order()
+    else:
+        log( ERR.FATAL, "The configured item is not available for purchase." )
+        exit(1)
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Interacts with a specific website.",
+        prog="{0}".format( os.path.basename( __file__ ) ),
+        epilog='Designed and implemented by Chris Punches <chris.punches@silogroup.org>.'
+    )
+
+    options = parser.add_mutually_exclusive_group()
+    options.add_argument( "-l", "--list-available", help="List available items", action='store_true' )
+    options.add_argument( "-la", "--list-all", help="List all items", action='store_true' )
+    options.add_argument( "-b", "--buy", help="Buy the configured item.", action='store_true' )
+
+    conf_options = parser.add_argument(
+        "-c",
+        "--config-file",
+        help="Override the path to the config file.",
+        default='./Conf/configuration.ini'
+    )
+
+    arguments = parser.parse_args()
+
+    if len(argv) == 1:
+        parser.print_help( stderr )
+        exit(1)
+
+    conf = ConfLoader( arguments.config_file )
+    log = Logger( 'Main', conf )
+    log( ERR.INFO, "Process started.".format( arguments.config_file ) )
+    log( ERR.INFO, "Loaded configuration file at '{0}'.".format( arguments.config_file ) )
+
+    session = Session( conf )
+    session.login()
+    session.update_inventory()
+
+    if arguments.buy:
+        log( ERR.INFO, "Attempting to place an order for the configured item with brand ID '{0}'.".format( conf.brand_id ))
+
+    if arguments.list_all:
+        log( ERR.INFO, "Listing all items..." )
+        list_items( session, all=True )
+
+    if arguments.list_available:
+        log( ERR.INFO, "Listing all available items..." )
+        list_items( session, all=False )
+
+
 if __name__ == '__main__':
-    Main()
+    main()

@@ -1,3 +1,4 @@
 Conf/configuration.ini
 venv
 .idea
+*.log
