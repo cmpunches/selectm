@@ -46,7 +46,9 @@ The exact method for doing this can vary from system to system but is generally 
 pip install -r requirements.txt
 ```
 
-More details can be found here: https://note.nkmk.me/en/python-pip-install-requirements/
+More details can be found here: 
+
+https://note.nkmk.me/en/python-pip-install-requirements/
 
 # Configuration
 Configuration should be a familiar process to most other tools.  An INI file provides the options you'll want.  A sample configuration file is provided for ease of use.
