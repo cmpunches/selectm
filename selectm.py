@@ -5,6 +5,11 @@ from lxml import html
 import json
 
 
+success_response_codes = [ 200, 201, 301, 302 ]
+
+def fail( step ):
+    print("Failed during '{0}' call.".format( step ), file=sys.stderr )
+    exit(1)
 
 class Product:
     def __init__( self, brand_id, brand_family_id, product_name, available ):
@@ -14,7 +19,12 @@ class Product:
         self.available = available
 
     def __str__(self):
-        return "[ Available: {3} ] {2} (Brand: {0}/ Family: {1})".format( self.brand_id, self.brand_family_id, self.product_name, self.available )
+        return "[ Available: {3} ] {2} (Brand: {0}/ Family: {1})".format(
+            self.brand_id,
+            self.brand_family_id,
+            self.product_name,
+            self.available
+        )
 
 
 class ConfLoader:
@@ -26,6 +36,7 @@ class ConfLoader:
         self.barrels  = parser.get( 'targeting', 'barrels')
         self.username = parser.get( 'user', 'username' )
         self.password = parser.get( 'user', 'password' )
+
 
 class InteractionClient:
     def __init__( self, conf ):
@@ -61,20 +72,18 @@ class InteractionClient:
 
         login_url = "https://{0}/app_users/login".format( self.conf.site_url )
         response = self.client.post( login_url, headers=headers, data=data )
-        if response.status_code in [ 200, 301, 302 ]:
+        if response.status_code in success_response_codes:
             print("Login successful.")
         else:
-            print( "Login failed.", file=sys.stderr )
-            exit(1)
+            fail("login")
 
     def update_inventory(self):
         inventory_pull = list()
 
         inventory_url = "https://{0}/orders/create-order".format( self.conf.site_url )
         response = self.client.get( inventory_url )
-        if not response.status_code in [ 200, 301, 302 ]:
-            print( "Failed to fetch inventory.", file=sys.stderr )
-            exit(1)
+        if not response.status_code in success_response_codes:
+            fail( "inventory-update" )
 
         deserialized_response = html.fromstring( response.text )
         product_listings_raw = deserialized_response.xpath('//*/div[@class="brands"]/div[@class="row"]/div')
@@ -117,7 +126,10 @@ class InteractionClient:
         retVal = None
 
         if (brand_id is None and product_name is None) or (brand_id is not None and product_name is not None):
-            print( "Must provide ONE OF either a brand_id or product_name to pull an item from inventory.", file=sys.stderr )
+            print(
+                "Must provide ONE OF either a brand_id or product_name to pull an item from inventory.",
+                file=sys.stderr
+            )
             exit(1)
 
         if product_name is not None:
@@ -150,7 +162,7 @@ class InteractionClient:
 
         cart_url = "https://{0}/orders/selected-brands".format( self.conf.site_url )
         response = self.client.post( cart_url, headers=headers, data=data )
-        if response.status_code in [ 200, 301, 302, 201 ]:
+        if response.status_code in success_response_codes:
             try:
                 response_obj = json.loads( response.text )
                 if len(response_obj['successMessages']) > 0:
@@ -165,18 +177,213 @@ class InteractionClient:
             print( "Failed to add item '{0}' to cart.".format( item.product_name ), file=sys.stderr )
             exit(1)
 
+
+    # why this couldn't be a single form is beyond me
+    def place_order(self):
+
+        # 1
+        # REQ: POST https://{}/orders/create-order +BODY (NHC)
+        # RSP: 302->http://{}/orders/select-delivery (redirects to:) (empty body) (NHC)
+
+        create_order_headers = {
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Origin': "https://{0}".format( self.conf.site_url ),
+            'Referer': "https://{0}/orders/create-order".format( self.conf.site_url )
+        }
+
+        create_order_data = {
+            '_method': 'POST'
+        }
+
+        create_order_url = "https://{0}/orders/create-order".format( self.conf.site_url )
+        create_order_response = self.client.post(
+            create_order_url,
+            headers=create_order_headers,
+            data=create_order_data
+        )
+
+        if not create_order_response.status_code in success_response_codes:
+            fail("create-order")
+
+        # end 1
+
+        # 4
+        # REQ: POST https://{}/orders/select-delivery (NHC) +BODY
+        # RSP: 302->http://{}/orders/select-barrels (redirects to:)
+
+        select_delivery_headers = {
+            'Host': '{0}'.format( self.conf.site_url ),
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Origin': 'https://{0}',
+            'Connection': 'keep-alive',
+            'Referer': 'https://{0}/orders/select-delivery'.format( self.conf.site_url )
+        }
+
+        select_delivery_data = {
+            '_method': "POST",
+            'data[Order][retailer_selection]': ',pick for me',
+            'data[Address][country_id]': '',
+            'data[Address][zone_id][6]': '',
+            'data[Address][zone_id][1]': '',
+            'data[Address][city]': '',
+            'data[Order][retailer_id]': '',
+            'data[Order][account_notes]'
+        }
+
+        select_delivery_url = "https://{0}/orders/select-delivery".format( self.conf.site_url )
+        select_delivery_response = self.client.post(
+            select_delivery_url,
+            headers=select_delivery_headers,
+            data=select_delivery_data
+        )
+
+        if not select_delivery_response.status_code in success_response_codes:
+            fail("delivery-select")
+
+        # ---
+
+        # 7
+        # REQ: POST https://{}/orders/select-barrels +BODY
+        # RSP: 302->http://{}/orders/schedule-distillery-visit
+
+        select_barrels_headers = {
+            'Host': ''.format( self.conf.site_url ),
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Origin': 'https://{0}'.format( self.conf.site_url ),
+            'Connection': 'keep-alive',
+            'Referer': 'https://{0}/orders/select-barrels'.format( self.conf.site_url )
+        }
+
+        select_barrels_data = {
+            '_method': 'POST',
+            'barrelSelectionPreference': '2'
+        }
+
+        select_barrels_url = "https://{0}/orders/select-barrels".format( self.conf.site_url )
+        select_barrels_response = self.client.post(
+            select_barrels_url,
+            headers=select_barrels_headers,
+            data=select_barrels_data
+        )
+
+        if not select_barrels_response.status_code in success_response_codes:
+           fail( "select-barrels" )
+
+        # ---
+
+        # 10
+        # REQ: POST https://{}/orders/schedule-distillery-visit (NHC) +BODY
+        # RSP: 302->http://{}/orders/confirm
+
+        schedule_distillery_visit_headers = {
+            'Host': '{0}'.format( self.conf.site_url ),
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Origin': 'https://{0}'.format( self.conf.site_url ),
+            'Connection': 'keep-alive',
+            'Referer': 'https://{0}/orders/schedule-distillery-visit'.format( self.conf.site_url )
+        }
+
+        schedule_distillery_visit_data = {
+            '_method': 'POST',
+            'data[TripDetail][5][schedule_visit]': '0,1',
+            'data[TripDetail][5][trip_date]': '06/04/2021',
+            'data[TripDetail][5][people_attending_trip]': '1',
+            'data[TripDetail][5][tour]': '0,1',
+            'data[TripDetail][5][lunch]': '0,1',
+            'data[TripDetail][5][morning_visit]':'am',
+            'data[Unscheduled][sample_type_id]': '3'
+        }
+        schedule_distillery_visit_url = "https://{0}/orders/schedule-distillery-visit".format( self.conf.site_url )
+        schedule_distillery_visit_response = self.client.post(
+            schedule_distillery_visit_url,
+            headers=schedule_distillery_visit_headers,
+            data=schedule_distillery_visit_data
+        )
+
+        if not schedule_distillery_visit_response.status_code in success_response_codes:
+            fail( "schedule-distillery-visit" )
+
+        # ---
+
+        # 13
+        # REQ: POST https://{}/orders/confirm
+            # body: "_method=POST"
+        # RSP: 302->http://{}/orders/order-complete (EB)
+
+        confirm_headers = {
+            'Host': "{0}".format( self.conf.site_url ),
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Origin': "https://{0}".format( self.conf.site_url ),
+            'Connection': 'keep-alive',
+            'Referer': "https://{0}/orders/confirm".format( self.conf.site_url )
+        }
+
+        confirm_data = {
+            '_method': 'POST'
+        }
+
+        confirm_url = "https://{0}/orders/confirm".format( self.conf.site_url )
+        confirm_response = self.client.post( confirm_url, headers=confirm_headers, data=confirm_data )
+
+        if not confirm_response.status_code in success_response_codes:
+            fail("confirm")
+
+        # ---
+
+        # 15
+        # REQ: POST https://{}/orders/order-complete (EB)
+        # RSP: 200
+
+        order_complete_headers = {
+            'Host': "{0}".format( self.conf.site_url ),
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Connection': 'keep-alive'
+        }
+
+        order_complete_url = "https://{0}/orders/order-complete".format( self.conf.site_url )
+        order_complete_response = self.client.post(
+            order_complete_url,
+            headers=order_complete_headers
+         )
+
+        if not order_complete_response.status_code in success_response_codes:
+            fail("order-complete")
+        # ---
+
+
+
 def Main():
     conf = ConfLoader( 'Conf/configuration.ini' )
     session = InteractionClient( conf )
     session.login()
     session.update_inventory()
 
-    if session.item_is_available( brand_id=conf.brand_id ):
-        item = session.get_item_from_inventory( brand_id=conf.brand_id )
-        print( "The item '{0}' is available for purchase.".format( item.product_name ) )
-        session.add_to_cart( item )
-    else:
-        print( "The configured item is not available.", file=sys.stderr )
+#    if session.item_is_available( brand_id=conf.brand_id ):
+#        item = session.get_item_from_inventory( brand_id=conf.brand_id )
+#        print( "The item '{0}' is available for purchase.".format( item.product_name ) )
+#        session.add_to_cart( item )
+#    else:
+#        print( "The configured item is not available.", file=sys.stderr )
+    for item in session.inventory:
+        if item.available:
+            print(item)
 
 
 if __name__ == '__main__':
