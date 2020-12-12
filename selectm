@@ -569,6 +569,7 @@ def main():
 
     if arguments.buy:
         log( ERR.INFO, "Attempting to place an order for the configured item with brand ID '{0}'.".format( conf.brand_id ))
+        buy ( session )
 
     if arguments.list_all:
         log( ERR.INFO, "Listing all items..." )
@@ -589,6 +590,7 @@ def main():
                 log( ERR.INFO, "Found item named '{0}'.".format( item.product_name  ) )
                 log( ERR.INFO, "Preparing to purchase one barrel of '{0}'.".format( item.product_name  ) )
                 # disarmed until D-day
+                # session.add_to_cart( item )
                 # session.place_order()
                 exit(0)
             else:
