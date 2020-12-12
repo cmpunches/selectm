@@ -8,7 +8,7 @@ from lxml import html
 from datetime import datetime
 from enum import Enum
 import argparse
-
+from time import sleep
 
 class Product:
     def __init__( self, brand_id, brand_family_id, product_name, available ):
@@ -38,6 +38,7 @@ class ConfLoader:
         self.log_file = parser.get('logging', 'log_file')
         self.max_logging_level = parser.getint('logging', 'verbosity')
         self.log_to_file = True
+        self.rate_limit = parser.getfloat( 'brutality', 'rate_limit' )
 
 
 ####
@@ -168,6 +169,7 @@ class Session:
             self.fail( "login" )
 
     def update_inventory(self):
+        self.log( ERR.DEBUG, "Updating Inventory." )
         inventory_pull = list()
 
         inventory_url = "https://{0}/orders/create-order".format( self.conf.site_url )
@@ -199,20 +201,22 @@ class Session:
                 product_name=product_name,
                 available=availability
             )
-
+            self.log( ERR.DEBUG, "Item parsed: '{0}'.".format( this_listing ) )
             inventory_pull.append( this_listing )
         self.inventory = inventory_pull
 
+    # does not hit their site, checks inventory on session
     def item_is_available(self, brand_id ):
-        self.log( ERR.INFO, "Searching for brand_id '{0}' in inventory.".format( brand_id ) )
+        self.log( ERR.DEBUG, "Searching for brand_id '{0}' in inventory.".format( brand_id ) )
         for item in self.inventory:
             if item.brand_id == brand_id:
-                self.log( ERR.INFO, "Found item: {0}".format( item ) )
+                self.log( ERR.DEBUG, "Found item: {0}".format( item ) )
                 if item.available:
                     return True
-        self.log( ERR.INFO, "Not available." )
+        self.log( ERR.DEBUG, "Brand ID '{0}' not available.".format( brand_id ) )
         return False
 
+    # returns a Product object from either a brand_id or product_name
     def get_item_from_inventory(self, brand_id=None, product_name=None ):
         retVal = None
 
@@ -232,6 +236,7 @@ class Session:
 
         return retVal
 
+    # adds an item to the cart which is stored in cookies
     def add_to_cart( self, item ):
         self.log( ERR.INFO, "Adding item '{0}' to cart.".format( item.product_name ))
 
@@ -268,7 +273,7 @@ class Session:
             self.log( ERR.FATAL, "Failed to add item '{0}' to cart.".format( item.product_name ) )
             self.fail( "add-to-cart" )
 
-    # why this couldn't be a single form is beyond me
+    # places an order with whatever's in the cart
     def place_order(self):
         # 1
         # REQ: POST https://{}/orders/create-order +BODY (NHC)
@@ -466,6 +471,8 @@ class Session:
         else:
             self.log( ERR.INFO, "Order confirmed." )
 
+        self.log( ERR.INFO, "Order complete.  This feature is untested.  Please log in manually and confirm." )
+
         # ---
 
         # 15
@@ -530,6 +537,14 @@ def main():
     options.add_argument( "-la", "--list-all", help="List all items", action='store_true' )
     options.add_argument( "-b", "--buy", help="Buy the configured item.", action='store_true' )
 
+    persistence_option = parser.add_mutually_exclusive_group()
+    persistence_option.add_argument(
+        "-p",
+        "--persist",
+        help="Loop through inventory until product in config becomes available, then buy it and exit.",
+        action='store_true'
+    )
+
     conf_options = parser.add_argument(
         "-c",
         "--config-file",
@@ -562,6 +577,22 @@ def main():
     if arguments.list_available:
         log( ERR.INFO, "Listing all available items..." )
         list_items( session, all=False )
+
+    if arguments.persist:
+        log( ERR.INFO, "Entering daemon mode until purchase or failure." )
+        while True:
+            # rate limit in between inventory update cycles to prevent erroneous ddos detection
+            sleep( session.conf.rate_limit )
+            session.update_inventory()
+            if session.item_is_available( brand_id=session.conf.brand_id ):
+                item = session.get_item_from_inventory( brand_id=session.conf.brand_id )
+                log( ERR.INFO, "Found item named '{0}'.".format( item.product_name  ) )
+                log( ERR.INFO, "Preparing to purchase one barrel of '{0}'.".format( item.product_name  ) )
+                # disarmed until D-day
+                # session.place_order()
+                exit(0)
+            else:
+                log(ERR.INFO, "Brand ID '{0}' not available. Cycling...".format( session.conf.brand_id ))
 
 
 if __name__ == '__main__':
