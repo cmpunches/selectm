@@ -10,6 +10,7 @@ from enum import Enum
 import argparse
 from time import sleep
 
+
 class Product:
     def __init__( self, brand_id, brand_family_id, product_name, available ):
         self.brand_id = brand_id
@@ -182,15 +183,16 @@ class Session:
         for listing in product_listings_raw:
             brand_family_id = listing.attrib['class'].split()[-1].split('-')[-1]
             product_name = listing.xpath('*/h2[@class="brand-name"]/text()')[0]
-            brand_id = listing.xpath('*/div[@class="add-to-order"]/input[@id="brand_id"]')[-1].value
+            brand_id = listing.xpath('*/div[4]/input[@name="data[brand_id]"]')[-1].value
+            # brand_id = listing.xpath('*/div[@class="add-to-order "]/input[@name="data[brand_id]"]')[-1].value
 
-            availability_raw = None
+            availability_raw = ""
             try:
-                availability_raw = listing.xpath('*/div[@class="add-to-order"]/button[@disabled="disabled"]/text()')[-1]
+                availability_raw = listing.xpath('*/div[4]/button[@type="submit"]/text()')[-1]
             except:
-                availability_raw = None
+                pass
 
-            if availability_raw is None:
+            if availability_raw == "Add to Order":
                 availability = True
             else:
                 availability = False
