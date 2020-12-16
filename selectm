@@ -131,7 +131,6 @@ class Session:
         self.client.headers.update(
             {
                 'User-Agent': "Mozilla/5.0 (X11; Fedora; Linux x86_64; rv:81.0) Gecko/20100101 Firefox/81.0",
-
             }
         )
         self.conf = conf
@@ -153,6 +152,11 @@ class Session:
             'Connection': 'keep-alive',
             'Referer': "https://{0}/login".format( self.conf.site_url )
         }
+        headers.update(
+            {
+                'User-Agent': "Mozilla/5.0 (X11; Fedora; Linux x86_64; rv:81.0) Gecko/20100101 Firefox/81.0",
+            }
+        )
 
         data = {
             '_method': 'POST',
@@ -251,6 +255,11 @@ class Session:
             'Connection': 'keep-alive',
             'Referer': "https://{0}/orders/create-order".format( self.conf.site_url )
         }
+        headers.update(
+            {
+                'User-Agent': "Mozilla/5.0 (X11; Fedora; Linux x86_64; rv:81.0) Gecko/20100101 Firefox/81.0",
+            }
+        )
 
         data = {
             'brandId': item.brand_id,
@@ -283,6 +292,7 @@ class Session:
         self.log( ERR.INFO, "Creating order." )
 
         create_order_headers = {
+            'User-Agent': "Mozilla/5.0 (X11; Fedora; Linux x86_64; rv:81.0) Gecko/20100101 Firefox/81.0",
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
             'Accept-Language': 'en-US,en;q=0.5',
             'Accept-Encoding': 'gzip, deflate, br',
@@ -321,6 +331,7 @@ class Session:
         self.log( ERR.INFO, "Selecting delivery method." )
 
         select_delivery_headers = {
+            'User-Agent': "Mozilla/5.0 (X11; Fedora; Linux x86_64; rv:81.0) Gecko/20100101 Firefox/81.0",
             'Host': '{0}'.format( self.conf.site_url ),
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
             'Accept-Language': 'en-US,en;q=0.5',
@@ -368,6 +379,7 @@ class Session:
         self.log( ERR.INFO, "Registering barrel selection preference." )
 
         select_barrels_headers = {
+            'User-Agent': "Mozilla/5.0 (X11; Fedora; Linux x86_64; rv:81.0) Gecko/20100101 Firefox/81.0",
             'Host': ''.format( self.conf.site_url ),
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
             'Accept-Language': 'en-US,en;q=0.5',
@@ -409,6 +421,7 @@ class Session:
         self.log( ERR.INFO, "Scheduling distillery visit." )
 
         schedule_distillery_visit_headers = {
+            'User-Agent': "Mozilla/5.0 (X11; Fedora; Linux x86_64; rv:81.0) Gecko/20100101 Firefox/81.0",
             'Host': '{0}'.format( self.conf.site_url ),
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
             'Accept-Language': 'en-US,en;q=0.5',
@@ -451,6 +464,7 @@ class Session:
         self.log( ERR.INFO, "Confirming order." )
 
         confirm_headers = {
+            'User-Agent': "Mozilla/5.0 (X11; Fedora; Linux x86_64; rv:81.0) Gecko/20100101 Firefox/81.0",
             'Host': "{0}".format( self.conf.site_url ),
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
             'Accept-Language': 'en-US,en;q=0.5',
@@ -483,6 +497,7 @@ class Session:
         self.log( ERR.INFO, "Completing order." )
 
         order_complete_headers = {
+            'User-Agent': "Mozilla/5.0 (X11; Fedora; Linux x86_64; rv:81.0) Gecko/20100101 Firefox/81.0",
             'Host': "{0}".format( self.conf.site_url ),
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
             'Accept-Language': 'en-US,en;q=0.5',
